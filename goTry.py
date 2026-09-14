@@ -81,7 +81,7 @@ while cap.isOpened():
             raw_angle = calculate_angle([s_lm.x, s_lm.y], [e_lm.x, e_lm.y], [w_lm.x, w_lm.y])
 
 # Snap near-straight extension angles directly to 180° to eliminate collinear jitter
-            if raw_angle > 172.0:
+            if raw_angle > 168.0:
                 raw_angle = 180.0
 
 # Apply exponential smoothing
