@@ -1,0 +1,616 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <title>RehabVision Web | Clinical Tracking Engine</title>
+  <style>
+    body {
+      margin: 0;
+      overflow: hidden;
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+      background: #0b1120;
+    }
+
+    #sceneCanvas {
+      display: block;
+    }
+
+    #webcamPreview {
+      position: fixed;
+      top: 20px;
+      left: 20px;
+      width: 180px;
+      height: 135px;
+      border-radius: 12px;
+      border: 3px solid #ffffff;
+      box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
+      transform: scaleX(-1);
+      z-index: 10;
+    }
+
+    #hud {
+      position: fixed;
+      top: 20px;
+      left: 220px;
+      right: 20px;
+      height: 90px;
+      background: rgba(255, 255, 255, 0.92);
+      border-radius: 16px;
+      border: 2px solid #e2e8f0;
+      display: flex;
+      align-items: center;
+      padding: 0 30px;
+      gap: 50px;
+      box-shadow: 0 4px 16px rgba(0, 0, 0, 0.15);
+      z-index: 10;
+    }
+
+    .hud-stat .label {
+      font-size: 12px;
+      font-weight: 700;
+      color: #64748b;
+      letter-spacing: 0.5px;
+    }
+
+    .hud-stat .value {
+      font-size: 24px;
+      font-weight: 800;
+      color: #0f172a;
+    }
+
+    #statusBadge {
+      margin-left: auto;
+      padding: 10px 20px;
+      border-radius: 8px;
+      font-weight: 700;
+      font-size: 13px;
+      color: white;
+      background: #ef4444;
+      transition: background 0.3s;
+    }
+
+    #statusBadge.active {
+      background: #10b981;
+    }
+
+    #levelBanner {
+      position: fixed;
+      top: 130px;
+      left: 50%;
+      transform: translateX(-50%);
+      font-size: 20px;
+      font-weight: 800;
+      color: #0f172a;
+      background: rgba(255, 255, 255, 0.85);
+      padding: 8px 24px;
+      border-radius: 20px;
+      z-index: 10;
+    }
+
+    #successFlash {
+      position: fixed;
+      top: 45%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      font-size: 42px;
+      font-weight: 900;
+      color: #10b981;
+      text-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+      opacity: 0;
+      transition: opacity 0.4s, transform 0.4s;
+      z-index: 10;
+      pointer-events: none;
+    }
+
+    #successFlash.show {
+      opacity: 1;
+      transform: translate(-50%, -60%);
+    }
+
+    #fileInputContainer {
+      position: fixed;
+      bottom: 20px;
+      left: 20px;
+      background: rgba(255, 255, 255, 0.9);
+      padding: 10px 16px;
+      border-radius: 10px;
+      font-size: 13px;
+      font-weight: 600;
+      z-index: 10;
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+    }
+  </style>
+</head>
+
+<body>
+
+  <video id="webcamPreview" autoplay playsinline muted></video>
+
+  <div id="hud">
+    <div class="hud-stat">
+      <div class="label">ELBOW FLEXION</div>
+      <div class="value" id="angleValue">--</div>
+    </div>
+    <div class="hud-stat">
+      <div class="label">TARGET HELD</div>
+      <div class="value" id="holdValue">0.0s</div>
+    </div>
+    <div class="hud-stat">
+      <div class="label">SCORE</div>
+      <div class="value" id="scoreValue">0</div>
+    </div>
+    <div id="statusBadge">OUT OF FRAME</div>
+  </div>
+
+  <div id="levelBanner">LEVEL 1 (Target Arc Target: 60&deg;)</div>
+  <div id="successFlash">Target Hit!</div>
+
+  <div id="fileInputContainer">
+    <label for="fbxFile">Load Local FBX Model: </label>
+    <input type="file" id="fbxFile" accept=".fbx">
+  </div>
+
+  <script type="importmap">
+    {
+        "imports": {
+            "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+            "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+        }
+    }
+    </script>
+
+  <script type="module">
+    import * as THREE from "three";
+    import { FBXLoader } from "three/addons/loaders/FBXLoader.js";
+    import { FilesetResolver, PoseLandmarker } from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@latest/vision_bundle.mjs";
+
+    // ============ 1. THREE.JS SCENE SETUP ============
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x87ceeb);
+    scene.fog = new THREE.FogExp2(0x87ceeb, 0.035);
+
+    const camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 0.1, 100);
+    camera.position.set(0, 1.8, 4.5);
+    camera.lookAt(0, 1.2, 0);
+
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.shadowMap.enabled = true;
+    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    document.body.appendChild(renderer.domElement);
+    renderer.domElement.id = "sceneCanvas";
+
+    const hemi = new THREE.HemisphereLight(0xffffff, 0x4a7c3f, 1.5);
+    scene.add(hemi);
+
+    const sun = new THREE.DirectionalLight(0xfff4e0, 1.8);
+    sun.position.set(5, 12, 6);
+    sun.castShadow = true;
+    sun.shadow.mapSize.set(2048, 2048);
+    scene.add(sun);
+
+    const frontFill = new THREE.DirectionalLight(0xffffff, 1.2);
+    frontFill.position.set(0, 2, 5);
+    scene.add(frontFill);
+
+    // Ground Plane
+    const groundGeo = new THREE.PlaneGeometry(60, 60);
+    const groundMat = new THREE.MeshStandardMaterial({ color: 0x6ab04c, roughness: 0.8 });
+    const ground = new THREE.Mesh(groundGeo, groundMat);
+    ground.rotation.x = -Math.PI / 2;
+    ground.position.y = 0;
+    ground.receiveShadow = true;
+    scene.add(ground);
+
+    // ============ 2. DENSE ENVIRONMENT ============
+    const GREEN_PALETTE = [
+      0x1b4332, 0x2d6a4f, 0x40916c, 0x52b788,
+      0x1e3a1e, 0x2e5a27, 0x3d7a37, 0x4d9a47,
+      0x0f2b1d, 0x184e2e, 0x23703e, 0x2f924e
+    ];
+    const TRUNK_MAT = new THREE.MeshStandardMaterial({ color: 0x4a2e1b, roughness: 0.9 });
+
+    function createPineTree(color) {
+      const group = new THREE.Group();
+      const trunk = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.18, 1.2, 8), TRUNK_MAT);
+      trunk.position.y = 0.6;
+      trunk.castShadow = true;
+      group.add(trunk);
+
+      const mat = new THREE.MeshStandardMaterial({ color, roughness: 0.7, flatShading: true });
+      for (let i = 0; i < 3; i++) {
+        const cone = new THREE.Mesh(new THREE.ConeGeometry(1.0 - i * 0.25, 1.2, 8), mat);
+        cone.position.y = 1.2 + i * 0.6;
+        cone.castShadow = true;
+        group.add(cone);
+      }
+      return group;
+    }
+
+    function createRoundTree(color) {
+      const group = new THREE.Group();
+      const trunk = new THREE.Mesh(new THREE.CylinderGeometry(0.14, 0.2, 1.4, 8), TRUNK_MAT);
+      trunk.position.y = 0.7;
+      trunk.castShadow = true;
+      group.add(trunk);
+
+      const mat = new THREE.MeshStandardMaterial({ color, roughness: 0.8, flatShading: true });
+      const foliage = new THREE.Mesh(new THREE.DodecahedronGeometry(1.1, 1), mat);
+      foliage.position.y = 2.0;
+      foliage.castShadow = true;
+      group.add(foliage);
+
+      return group;
+    }
+
+    function createBush(color) {
+      const group = new THREE.Group();
+      const mat = new THREE.MeshStandardMaterial({ color, roughness: 0.8, flatShading: true });
+      const bushGeo = new THREE.DodecahedronGeometry(0.4, 1);
+
+      const p1 = new THREE.Mesh(bushGeo, mat);
+      p1.position.set(0, 0.3, 0);
+      p1.castShadow = true;
+      group.add(p1);
+
+      const p2 = new THREE.Mesh(bushGeo, mat);
+      p2.position.set(0.25, 0.25, 0.1);
+      p2.scale.setScalar(0.75);
+      p2.castShadow = true;
+      group.add(p2);
+
+      return group;
+    }
+
+    function createGrassClump(color) {
+      const group = new THREE.Group();
+      const mat = new THREE.MeshStandardMaterial({ color, roughness: 0.6, side: THREE.DoubleSide });
+      const bladeGeo = new THREE.ConeGeometry(0.05, 0.35, 3);
+
+      for (let i = 0; i < 5; i++) {
+        const blade = new THREE.Mesh(bladeGeo, mat);
+        blade.position.set((Math.random() - 0.5) * 0.15, 0.15, (Math.random() - 0.5) * 0.15);
+        blade.rotation.x = (Math.random() - 0.5) * 0.3;
+        blade.rotation.z = (Math.random() - 0.5) * 0.3;
+        group.add(blade);
+      }
+      return group;
+    }
+
+    function populateForest() {
+      const treeConfigs = [];
+      for (let i = 0; i < 22; i++) {
+        const side = Math.random() > 0.5 ? 1 : -1;
+        treeConfigs.push({
+          x: side * (2.2 + Math.random() * 6.0),
+          z: -1.5 - Math.random() * 10.0,
+          scale: 0.9 + Math.random() * 0.7,
+          type: Math.random() > 0.5 ? 'pine' : 'round'
+        });
+      }
+
+      treeConfigs.forEach(pos => {
+        const color = GREEN_PALETTE[Math.floor(Math.random() * GREEN_PALETTE.length)];
+        const tree = pos.type === 'round' ? createRoundTree(color) : createPineTree(color);
+        tree.position.set(pos.x, 0, pos.z);
+        tree.scale.setScalar(pos.scale);
+        scene.add(tree);
+      });
+
+      for (let i = 0; i < 20; i++) {
+        const color = GREEN_PALETTE[Math.floor(Math.random() * GREEN_PALETTE.length)];
+        const bush = createBush(color);
+        const side = Math.random() > 0.5 ? 1 : -1;
+        bush.position.set(side * (1.5 + Math.random() * 6), 0, -1 - Math.random() * 8);
+        bush.scale.setScalar(0.8 + Math.random() * 0.6);
+        scene.add(bush);
+      }
+
+      for (let i = 0; i < 35; i++) {
+        const color = GREEN_PALETTE[Math.floor(Math.random() * GREEN_PALETTE.length)];
+        const grass = createGrassClump(color);
+        grass.position.set((Math.random() - 0.5) * 12, 0, -0.5 - Math.random() * 8);
+        grass.scale.setScalar(0.8 + Math.random() * 0.8);
+        scene.add(grass);
+      }
+    }
+
+    populateForest();
+
+    // ============ 3. FBX AVATAR LOADING & RIGGING ============
+    let avatarModel = null;
+    let rightForearmBone = null;
+    let initialQuaternion = new THREE.Quaternion();
+    const fbxLoader = new FBXLoader();
+
+    function loadFBXFromURL(url) {
+      fbxLoader.load(url, (fbx) => {
+        if (avatarModel) scene.remove(avatarModel);
+
+        avatarModel = fbx;
+        avatarModel.scale.setScalar(0.01);
+        avatarModel.position.set(0, 0, 0);
+
+        rightForearmBone = null;
+
+        avatarModel.traverse((child) => {
+          if (child.isMesh) {
+            child.castShadow = true;
+            child.receiveShadow = true;
+          }
+
+          if (child.isBone) {
+            const name = child.name.toLowerCase();
+            if (name.includes("forearm") && (name.includes("right") || name.includes("r"))) {
+              rightForearmBone = child;
+              initialQuaternion.copy(child.quaternion);
+            }
+          }
+        });
+
+        if (!rightForearmBone) {
+          avatarModel.traverse((child) => {
+            if (child.isBone && child.name.toLowerCase().includes("forearm")) {
+              rightForearmBone = child;
+              initialQuaternion.copy(child.quaternion);
+            }
+          });
+        }
+
+        scene.add(avatarModel);
+      }, undefined, (err) => console.error("FBX Load Error:", err));
+    }
+
+    loadFBXFromURL("./Ch46_nonPBR.fbx");
+
+    document.getElementById("fbxFile").addEventListener("change", (e) => {
+      const file = e.target.files[0];
+      if (file) {
+        const fileURL = URL.createObjectURL(file);
+        loadFBXFromURL(fileURL);
+      }
+    });
+
+    // ============ 4. GAME & LEVEL CONTROLLER ============
+    let currentLevel = 1;
+    let targetAngle = 60;
+    let score = 0;
+    let holdTimer = 0;
+    const REQUIRED_HOLD_TIME = 1.5;
+    const LEVEL_ANGLES = [45, 65, 90, 120, 150, 175];
+
+    function nextLevel() {
+      currentLevel++;
+      targetAngle = LEVEL_ANGLES[Math.min(currentLevel - 1, LEVEL_ANGLES.length - 1)];
+      document.getElementById("levelBanner").innerHTML = `LEVEL ${currentLevel} (Target Arc Target: ${targetAngle}&deg;)`;
+      holdTimer = 0;
+    }
+
+    function showSuccessFlash() {
+      const el = document.getElementById("successFlash");
+      el.textContent = `Target Hit! (+100)`;
+      el.classList.add("show");
+      setTimeout(() => el.classList.remove("show"), 1000);
+    }
+
+    // ============ 5. CROSS-CAMERA NORMALIZED TRACKING ============
+    const LEFT_SHOULDER = 11, LEFT_ELBOW = 13, LEFT_WRIST = 15;
+
+    let smoothedAngle = 60.0;
+    let lastAppliedAngle = 60.0;
+    let trackingValid = false;
+
+    // Dynamic auto-calibration for cross-hardware variance
+    let detectedMinAngle = 180.0;
+    let detectedMaxAngle = 0.0;
+
+    /**
+     * Calculates 2D planar angle adjusted for camera aspect ratio.
+     * Normalization prevents wide-angle lenses from stretching calculated angles.
+     */
+    function calculateNormalized2DAngle(a, b, c, aspect) {
+      const ba = [(a.x - b.x) * aspect, a.y - b.y];
+      const bc = [(c.x - b.x) * aspect, c.y - b.y];
+
+      const dot = ba[0] * bc[0] + ba[1] * bc[1];
+      const magBA = Math.hypot(ba[0], ba[1]);
+      const magBC = Math.hypot(bc[0], bc[1]);
+
+      if (magBA * magBC === 0) return 180.0;
+
+      const cosAngle = Math.max(-1.0, Math.min(1.0, dot / (magBA * magBC)));
+      return (Math.acos(cosAngle) * 180.0) / Math.PI;
+    }
+
+    /**
+     * Dynamic Range Adaptive Mapper
+     * Automatically adjusts bounds to ensure full 20°-180° range regardless of camera distance or lens.
+     */
+    function mapToAdaptiveFullRange(rawAngle) {
+      // Adaptive auto-calibration tracking
+      detectedMinAngle = Math.min(detectedMinAngle, rawAngle);
+      detectedMaxAngle = Math.max(detectedMaxAngle, rawAngle);
+
+      const minBound = Math.max(25.0, detectedMinAngle);
+      const maxBound = Math.min(165.0, Math.max(140.0, detectedMaxAngle));
+
+      let normalized = (rawAngle - minBound) / (maxBound - minBound);
+      normalized = Math.max(0.0, Math.min(1.0, normalized));
+
+      return 20.0 + normalized * (180.0 - 20.0);
+    }
+
+    // Low-latency filter to stabilize frame rate fluctuations across different laptops
+    class OneEuroFilter {
+      constructor(minCutoff = 1.0, beta = 0.007) {
+        this.minCutoff = minCutoff;
+        this.beta = beta;
+        this.xPrev = null;
+        this.dxPrev = 0;
+      }
+
+      filter(x, dt) {
+        if (this.xPrev === null || dt <= 0) {
+          this.xPrev = x;
+          return x;
+        }
+        const alphaDx = this.alpha(1.0, dt);
+        const dx = (x - this.xPrev) / dt;
+        const dxHat = alphaDx * dx + (1 - alphaDx) * this.dxPrev;
+
+        const cutoff = this.minCutoff + this.beta * Math.abs(dxHat);
+        const alphaX = this.alpha(cutoff, dt);
+        const xHat = alphaX * x + (1 - alphaX) * this.xPrev;
+
+        this.xPrev = xHat;
+        this.dxPrev = dxHat;
+        return xHat;
+      }
+
+      alpha(cutoff, dt) {
+        const tau = 1.0 / (2 * Math.PI * cutoff);
+        return 1.0 / (1.0 + tau / dt);
+      }
+    }
+
+    const angleFilter = new OneEuroFilter(0.8, 0.005);
+    const video = document.getElementById("webcamPreview");
+
+    async function setupCamera() {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: {
+          width: { ideal: 640 },
+          height: { ideal: 480 },
+          facingMode: "user"
+        }
+      });
+      video.srcObject = stream;
+      return new Promise((resolve) => {
+        video.onloadedmetadata = () => resolve(video);
+      });
+    }
+
+    async function setupPoseLandmarker() {
+      const vision = await FilesetResolver.forVisionTasks(
+        "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@latest/wasm"
+      );
+      return await PoseLandmarker.createFromOptions(vision, {
+        baseOptions: {
+          modelAssetPath: "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/latest/pose_landmarker_lite.task"
+        },
+        runningMode: "VIDEO",
+        numPoses: 1
+      });
+    }
+
+    function updateHUD() {
+      document.getElementById("angleValue").textContent = trackingValid ? `${lastAppliedAngle.toFixed(1)}\u00B0` : "--";
+      document.getElementById("scoreValue").textContent = score;
+      document.getElementById("holdValue").textContent = `${holdTimer.toFixed(1)}s`;
+
+      const badge = document.getElementById("statusBadge");
+      if (!trackingValid) {
+        badge.textContent = "OUT OF FRAME";
+        badge.className = "";
+      } else {
+        badge.textContent = "TRACKING ACTIVE";
+        badge.className = "active";
+      }
+    }
+
+    let lastFrameTime = performance.now();
+
+    async function main() {
+      await setupCamera();
+      const landmarker = await setupPoseLandmarker();
+
+      function loop() {
+        const nowMs = performance.now();
+        const deltaTime = Math.max(0.001, Math.min((nowMs - lastFrameTime) / 1000.0, 0.1));
+        lastFrameTime = nowMs;
+
+        const result = landmarker.detectForVideo(video, nowMs);
+
+        if (result.landmarks && result.landmarks.length > 0) {
+          const lm = result.landmarks[0];
+          const s = lm[LEFT_SHOULDER], e = lm[LEFT_ELBOW], w = lm[LEFT_WRIST];
+
+          const sVis = s.visibility ?? 1.0, eVis = e.visibility ?? 1.0, wVis = w.visibility ?? 1.0;
+          const MIN_VISIBILITY = 0.35;
+          const isVisible = (sVis > MIN_VISIBILITY && eVis > MIN_VISIBILITY && wVis > MIN_VISIBILITY);
+
+          const inBounds = (pt) => (pt.x >= 0.00 && pt.x <= 1.00 && pt.y >= 0.00 && pt.y <= 1.00);
+          const isInsideFrame = inBounds(s) && inBounds(e) && inBounds(w);
+
+          if (isVisible && isInsideFrame) {
+            trackingValid = true;
+
+            // Camera aspect ratio normalization
+            const aspect = (video.videoWidth && video.videoHeight) ? (video.videoWidth / video.videoHeight) : (4 / 3);
+
+            // Step 1: Aspect-ratio adjusted 2D angle
+            const rawAngle = calculateNormalized2DAngle(s, e, w, aspect);
+
+            // Step 2: Auto-calibrating physiological mapper
+            const mappedAngle = mapToAdaptiveFullRange(rawAngle);
+
+            // Step 3: Adaptive One Euro Signal Filter
+            smoothedAngle = angleFilter.filter(mappedAngle, deltaTime);
+            lastAppliedAngle = smoothedAngle;
+
+            const clampedAngle = THREE.MathUtils.clamp(lastAppliedAngle, 20.0, 180.0);
+            const flexionOffset = THREE.MathUtils.degToRad(180.0 - clampedAngle);
+
+            // Local Quaternion transform prevents skeletal twisting
+            if (rightForearmBone) {
+              const offsetQuat = new THREE.Quaternion();
+              offsetQuat.setFromAxisAngle(new THREE.Vector3(1, 0, 0), -flexionOffset);
+              rightForearmBone.quaternion.copy(initialQuaternion).multiply(offsetQuat);
+            }
+
+            // Target Hold Mechanics
+            const targetDist = Math.abs(clampedAngle - targetAngle);
+            if (targetDist <= 10.0) {
+              holdTimer += deltaTime;
+              if (holdTimer >= REQUIRED_HOLD_TIME) {
+                score += 100;
+                showSuccessFlash();
+                nextLevel();
+              }
+            } else {
+              holdTimer = Math.max(0, holdTimer - deltaTime * 1.5);
+            }
+          } else {
+            trackingValid = false;
+            holdTimer = 0;
+            if (rightForearmBone) {
+              rightForearmBone.quaternion.copy(initialQuaternion);
+            }
+          }
+        } else {
+          trackingValid = false;
+          holdTimer = 0;
+          if (rightForearmBone) {
+            rightForearmBone.quaternion.copy(initialQuaternion);
+          }
+        }
+
+        updateHUD();
+        renderer.render(scene, camera);
+        requestAnimationFrame(loop);
+      }
+      loop();
+    }
+
+    window.addEventListener("resize", () => {
+      camera.aspect = window.innerWidth / window.innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(window.innerWidth, window.innerHeight);
+    });
+
+    main().catch(err => console.error(err));
+  </script>
+</body>
+
+</html>
