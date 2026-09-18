@@ -43,21 +43,21 @@
       display: flex;
       align-items: center;
       padding: 0 30px;
-      gap: 50px;
+      gap: 40px;
       box-shadow: 0 4px 16px rgba(0, 0, 0, 0.15);
       z-index: 10;
       backdrop-filter: blur(8px);
     }
 
     .hud-stat .label {
-      font-size: 12px;
+      font-size: 11px;
       font-weight: 700;
       color: #64748b;
       letter-spacing: 0.5px;
     }
 
     .hud-stat .value {
-      font-size: 24px;
+      font-size: 22px;
       font-weight: 800;
       color: #0f172a;
     }
@@ -139,8 +139,12 @@
 
   <div id="hud">
     <div class="hud-stat">
-      <div class="label">ELBOW FLEXION</div>
-      <div class="value" id="angleValue">--</div>
+      <div class="label">LEFT FLEXION</div>
+      <div class="value" id="leftAngleValue">--</div>
+    </div>
+    <div class="hud-stat">
+      <div class="label">RIGHT FLEXION</div>
+      <div class="value" id="rightAngleValue">--</div>
     </div>
     <div class="hud-stat">
       <div class="label">TARGET HELD</div>
@@ -258,7 +262,6 @@
     function createFlowerPatch(color) {
       const group = new THREE.Group();
 
-      // Foliage Base
       const bushMat = new THREE.MeshStandardMaterial({ color: 0x38b000, roughness: 0.8, flatShading: true });
       const base = new THREE.Mesh(new THREE.DodecahedronGeometry(0.35, 1), bushMat);
       base.position.y = 0.2;
@@ -266,7 +269,6 @@
       base.castShadow = true;
       group.add(base);
 
-      // Colorful Blossoms
       const flowerMat = new THREE.MeshStandardMaterial({ color, roughness: 0.4 });
       const centerMat = new THREE.MeshStandardMaterial({ color: 0xffea00, roughness: 0.3 });
       const petalGeo = new THREE.SphereGeometry(0.06, 6, 6);
@@ -296,7 +298,6 @@
       return group;
     }
 
-    // Floating Ambient Particles (Pollen/Butterflies)
     let particleSystem;
     function createAmbientParticles() {
       const count = 120;
@@ -329,7 +330,6 @@
     }
 
     function populateForest() {
-      // Green Trees
       for (let i = 0; i < 22; i++) {
         const side = Math.random() > 0.5 ? 1 : -1;
         const color = GREEN_TREE_PALETTE[Math.floor(Math.random() * GREEN_TREE_PALETTE.length)];
@@ -339,7 +339,6 @@
         scene.add(tree);
       }
 
-      // Wildflower Patches
       for (let i = 0; i < 28; i++) {
         const color = FLOWER_PALETTE[Math.floor(Math.random() * FLOWER_PALETTE.length)];
         const flowers = createFlowerPatch(color);
@@ -353,10 +352,12 @@
     populateForest();
     createAmbientParticles();
 
-    // ============ 3. FBX AVATAR LOADING & RIGGING ============
+    // ============ 3. DUAL-ARM FBX AVATAR LOADING & RIGGING ============
     let avatarModel = null;
     let rightForearmBone = null;
-    let initialQuaternion = new THREE.Quaternion();
+    let leftForearmBone = null;
+    let initialRightQuat = new THREE.Quaternion();
+    let initialLeftQuat = new THREE.Quaternion();
     const fbxLoader = new FBXLoader();
 
     function loadFBXFromURL(url) {
@@ -368,6 +369,7 @@
         avatarModel.position.set(0, 0, 0);
 
         rightForearmBone = null;
+        leftForearmBone = null;
 
         avatarModel.traverse((child) => {
           if (child.isMesh) {
@@ -377,18 +379,29 @@
 
           if (child.isBone) {
             const name = child.name.toLowerCase();
-            if (name.includes("forearm") && (name.includes("right") || name.includes("r"))) {
-              rightForearmBone = child;
-              initialQuaternion.copy(child.quaternion);
+            if (name.includes("forearm")) {
+              if (name.includes("right") || name.endsWith("r") || name.includes("_r")) {
+                rightForearmBone = child;
+                initialRightQuat.copy(child.quaternion);
+              } else if (name.includes("left") || name.endsWith("l") || name.includes("_l")) {
+                leftForearmBone = child;
+                initialLeftQuat.copy(child.quaternion);
+              }
             }
           }
         });
 
-        if (!rightForearmBone) {
+        // Fallbacks if naming is generic
+        if (!rightForearmBone || !leftForearmBone) {
           avatarModel.traverse((child) => {
             if (child.isBone && child.name.toLowerCase().includes("forearm")) {
-              rightForearmBone = child;
-              initialQuaternion.copy(child.quaternion);
+              if (!rightForearmBone) {
+                rightForearmBone = child;
+                initialRightQuat.copy(child.quaternion);
+              } else if (!leftForearmBone && child !== rightForearmBone) {
+                leftForearmBone = child;
+                initialLeftQuat.copy(child.quaternion);
+              }
             }
           });
         }
@@ -408,6 +421,7 @@
     });
 
     // ============ 4. GAME & LEVEL CONTROLLER ============
+    // ============ 4. GAME & LEVEL CONTROLLER ============
     let currentLevel = 1;
     let targetAngle = 60;
     let score = 0;
@@ -416,8 +430,16 @@
     const LEVEL_ANGLES = [45, 65, 90, 120, 150, 175];
 
     function nextLevel() {
+      if (currentLevel >= LEVEL_ANGLES.length) {
+        document.getElementById("levelBanner").innerHTML =
+          `TARGET ACHIEVED! <span style="font-size: 14px; font-weight: 600;">[Refresh page to restart | Keep moving to stay immersed]</span>`;
+        targetAngle = 175; // Lock target at max angle for ongoing practice
+        holdTimer = 0;
+        return;
+      }
+
       currentLevel++;
-      targetAngle = LEVEL_ANGLES[Math.min(currentLevel - 1, LEVEL_ANGLES.length - 1)];
+      targetAngle = LEVEL_ANGLES[currentLevel - 1];
       document.getElementById("levelBanner").innerHTML = `LEVEL ${currentLevel} (Target Arc Target: ${targetAngle}&deg;)`;
       holdTimer = 0;
     }
@@ -429,16 +451,19 @@
       setTimeout(() => el.classList.remove("show"), 1000);
     }
 
-    // ============ 5. CROSS-CAMERA NORMALIZED TRACKING ============
+    // ============ 5. DUAL-ARM CROSS-CAMERA TRACKING ============
+    // MediaPipe Landmarks: User Left (Camera Right) = 11, 13, 15 | User Right (Camera Left) = 12, 14, 16
     const LEFT_SHOULDER = 11, LEFT_ELBOW = 13, LEFT_WRIST = 15;
+    const RIGHT_SHOULDER = 12, RIGHT_ELBOW = 14, RIGHT_WRIST = 16;
 
-    let smoothedAngle = 60.0;
-    let lastAppliedAngle = 60.0;
-    let trackingValid = false;
+    let lastLeftAngle = 60.0;
+    let lastRightAngle = 60.0;
+    let leftValid = false;
+    let rightValid = false;
     let trackingStatusMessage = "OUT OF FRAME";
 
-    let detectedMinAngle = 180.0;
-    let detectedMaxAngle = 0.0;
+    let leftMinAngle = 180.0, leftMaxAngle = 0.0;
+    let rightMinAngle = 180.0, rightMaxAngle = 0.0;
 
     function calculateNormalized2DAngle(a, b, c, aspect) {
       const ba = [(a.x - b.x) * aspect, a.y - b.y];
@@ -454,17 +479,22 @@
       return (Math.acos(cosAngle) * 180.0) / Math.PI;
     }
 
-    function mapToAdaptiveFullRange(rawAngle) {
-      detectedMinAngle = Math.min(detectedMinAngle, rawAngle);
-      detectedMaxAngle = Math.max(detectedMaxAngle, rawAngle);
-
-      const minBound = Math.max(25.0, detectedMinAngle);
-      const maxBound = Math.min(165.0, Math.max(140.0, detectedMaxAngle));
-
-      let normalized = (rawAngle - minBound) / (maxBound - minBound);
-      normalized = Math.max(0.0, Math.min(1.0, normalized));
-
-      return 20.0 + normalized * (180.0 - 20.0);
+    function mapToAdaptiveRange(rawAngle, isLeft) {
+      if (isLeft) {
+        leftMinAngle = Math.min(leftMinAngle, rawAngle);
+        leftMaxAngle = Math.max(leftMaxAngle, rawAngle);
+        const minBound = Math.max(25.0, leftMinAngle);
+        const maxBound = Math.min(165.0, Math.max(140.0, leftMaxAngle));
+        let normalized = (rawAngle - minBound) / (maxBound - minBound);
+        return 20.0 + Math.max(0.0, Math.min(1.0, normalized)) * 160.0;
+      } else {
+        rightMinAngle = Math.min(rightMinAngle, rawAngle);
+        rightMaxAngle = Math.max(rightMaxAngle, rawAngle);
+        const minBound = Math.max(25.0, rightMinAngle);
+        const maxBound = Math.min(165.0, Math.max(140.0, rightMaxAngle));
+        let normalized = (rawAngle - minBound) / (maxBound - minBound);
+        return 20.0 + Math.max(0.0, Math.min(1.0, normalized)) * 160.0;
+      }
     }
 
     class OneEuroFilter {
@@ -499,7 +529,8 @@
       }
     }
 
-    const angleFilter = new OneEuroFilter(0.8, 0.005);
+    const leftFilter = new OneEuroFilter(0.8, 0.005);
+    const rightFilter = new OneEuroFilter(0.8, 0.005);
     const video = document.getElementById("webcamPreview");
 
     async function setupCamera() {
@@ -529,15 +560,42 @@
       });
     }
 
+    function evaluateArm(s, e, w, aspect, filter, isLeft, dt) {
+      const sVis = s.visibility ?? 1.0, eVis = e.visibility ?? 1.0, wVis = w.visibility ?? 1.0;
+      const MIN_VISIBILITY = 0.60;
+      const isVisible = (sVis > MIN_VISIBILITY && eVis > MIN_VISIBILITY && wVis > MIN_VISIBILITY);
+
+      const inBounds = (pt) => (pt.x >= 0.05 && pt.x <= 0.95 && pt.y >= 0.05 && pt.y <= 0.95);
+      const isInsideFrame = inBounds(s) && inBounds(e) && inBounds(w);
+
+      const upperArmLen = Math.hypot(e.x - s.x, e.y - s.y);
+      const foreArmLen = Math.hypot(w.x - e.x, w.y - e.y);
+
+      const isArmDroppedVertical = (w.y - s.y > 0.45) && (Math.abs(w.x - s.x) < 0.12);
+      const armRatio = upperArmLen > 0 ? (foreArmLen / upperArmLen) : 0;
+      const isRatioValid = armRatio > 0.35 && armRatio < 2.5;
+
+      if (!isInsideFrame || !isVisible || isArmDroppedVertical || !isRatioValid) {
+        return { valid: false, angle: 180.0 };
+      }
+
+      const rawAngle = calculateNormalized2DAngle(s, e, w, aspect);
+      const mappedAngle = mapToAdaptiveRange(rawAngle, isLeft);
+      const smoothed = filter.filter(mappedAngle, dt);
+
+      return { valid: true, angle: smoothed };
+    }
+
     function updateHUD() {
-      document.getElementById("angleValue").textContent = trackingValid ? `${lastAppliedAngle.toFixed(1)}\u00B0` : "--";
+      document.getElementById("leftAngleValue").textContent = leftValid ? `${lastLeftAngle.toFixed(1)}\u00B0` : "--";
+      document.getElementById("rightAngleValue").textContent = rightValid ? `${lastRightAngle.toFixed(1)}\u00B0` : "--";
       document.getElementById("scoreValue").textContent = score;
       document.getElementById("holdValue").textContent = `${holdTimer.toFixed(1)}s`;
 
       const badge = document.getElementById("statusBadge");
       badge.textContent = trackingStatusMessage;
 
-      if (trackingValid) {
+      if (leftValid || rightValid) {
         badge.className = "active";
       } else if (trackingStatusMessage.includes("POSTURE") || trackingStatusMessage.includes("ARM DROPPED")) {
         badge.className = "warning";
@@ -561,82 +619,66 @@
 
         if (result.landmarks && result.landmarks.length > 0) {
           const lm = result.landmarks[0];
-          const s = lm[LEFT_SHOULDER], e = lm[LEFT_ELBOW], w = lm[LEFT_WRIST];
+          const aspect = (video.videoWidth && video.videoHeight) ? (video.videoWidth / video.videoHeight) : (4 / 3);
 
-          const sVis = s.visibility ?? 1.0, eVis = e.visibility ?? 1.0, wVis = w.visibility ?? 1.0;
+          // Evaluate Left Arm (User's Left Arm)
+          const leftRes = evaluateArm(lm[LEFT_SHOULDER], lm[LEFT_ELBOW], lm[LEFT_WRIST], aspect, leftFilter, true, deltaTime);
+          leftValid = leftRes.valid;
+          if (leftValid) lastLeftAngle = leftRes.angle;
 
-          const MIN_VISIBILITY = 0.60;
-          const isVisible = (sVis > MIN_VISIBILITY && eVis > MIN_VISIBILITY && wVis > MIN_VISIBILITY);
+          // Evaluate Right Arm (User's Right Arm)
+          const rightRes = evaluateArm(lm[RIGHT_SHOULDER], lm[RIGHT_ELBOW], lm[RIGHT_WRIST], aspect, rightFilter, false, deltaTime);
+          rightValid = rightRes.valid;
+          if (rightValid) lastRightAngle = rightRes.angle;
 
-          const inBounds = (pt) => (pt.x >= 0.05 && pt.x <= 0.95 && pt.y >= 0.05 && pt.y <= 0.95);
-          const isInsideFrame = inBounds(s) && inBounds(e) && inBounds(w);
-
-          const upperArmLen = Math.hypot(e.x - s.x, e.y - s.y);
-          const foreArmLen = Math.hypot(w.x - e.x, w.y - e.y);
-
-          const isArmDroppedVertical = (w.y - s.y > 0.45) && (Math.abs(w.x - s.x) < 0.12);
-          const armRatio = upperArmLen > 0 ? (foreArmLen / upperArmLen) : 0;
-          const isRatioValid = armRatio > 0.35 && armRatio < 2.5;
-
-          if (!isInsideFrame) {
-            trackingValid = false;
-            trackingStatusMessage = "OUT OF FRAME";
-          } else if (!isVisible) {
-            trackingValid = false;
-            trackingStatusMessage = "LOW CONFIDENCE";
-          } else if (isArmDroppedVertical) {
-            trackingValid = false;
-            trackingStatusMessage = "ARM DROPPED";
-          } else if (!isRatioValid) {
-            trackingValid = false;
-            trackingStatusMessage = "POOR POSTURE";
-          } else {
-            trackingValid = true;
+          // Update Status Message
+          if (leftValid || rightValid) {
             trackingStatusMessage = "TRACKING ACTIVE";
-
-            const aspect = (video.videoWidth && video.videoHeight) ? (video.videoWidth / video.videoHeight) : (4 / 3);
-
-            const rawAngle = calculateNormalized2DAngle(s, e, w, aspect);
-            const mappedAngle = mapToAdaptiveFullRange(rawAngle);
-
-            smoothedAngle = angleFilter.filter(mappedAngle, deltaTime);
-            lastAppliedAngle = smoothedAngle;
-
-            const clampedAngle = THREE.MathUtils.clamp(lastAppliedAngle, 20.0, 180.0);
-            const flexionOffset = THREE.MathUtils.degToRad(180.0 - clampedAngle);
-
-            if (rightForearmBone) {
-              const offsetQuat = new THREE.Quaternion();
-              offsetQuat.setFromAxisAngle(new THREE.Vector3(1, 0, 0), -flexionOffset);
-              rightForearmBone.quaternion.copy(initialQuaternion).multiply(offsetQuat);
-            }
-
-            const targetDist = Math.abs(clampedAngle - targetAngle);
-            if (targetDist <= 10.0) {
-              holdTimer += deltaTime;
-              if (holdTimer >= REQUIRED_HOLD_TIME) {
-                score += 100;
-                showSuccessFlash();
-                nextLevel();
-              }
-            } else {
-              holdTimer = Math.max(0, holdTimer - deltaTime * 1.5);
-            }
+          } else {
+            trackingStatusMessage = "OUT OF FRAME";
           }
 
-          if (!trackingValid) {
-            holdTimer = 0;
-            if (rightForearmBone) {
-              rightForearmBone.quaternion.copy(initialQuaternion);
+          // MIRRORED MAPPING: User's Left Arm -> Avatar Right Forearm
+          if (leftValid && rightForearmBone) {
+            const clamped = THREE.MathUtils.clamp(lastLeftAngle, 20.0, 180.0);
+            const flexionOffset = THREE.MathUtils.degToRad(180.0 - clamped);
+            const offsetQuat = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), -flexionOffset);
+            rightForearmBone.quaternion.copy(initialRightQuat).multiply(offsetQuat);
+          } else if (rightForearmBone) {
+            rightForearmBone.quaternion.copy(initialRightQuat);
+          }
+
+          // MIRRORED MAPPING: User's Right Arm -> Avatar Left Forearm
+          if (rightValid && leftForearmBone) {
+            const clamped = THREE.MathUtils.clamp(lastRightAngle, 20.0, 180.0);
+            const flexionOffset = THREE.MathUtils.degToRad(180.0 - clamped);
+            const offsetQuat = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), -flexionOffset);
+            leftForearmBone.quaternion.copy(initialLeftQuat).multiply(offsetQuat);
+          } else if (leftForearmBone) {
+            leftForearmBone.quaternion.copy(initialLeftQuat);
+          }
+
+          // Target Checking (Either arm or both arm movement holds target)
+          const leftDist = leftValid ? Math.abs(lastLeftAngle - targetAngle) : Infinity;
+          const rightDist = rightValid ? Math.abs(lastRightAngle - targetAngle) : Infinity;
+
+          if (leftDist <= 10.0 || rightDist <= 10.0) {
+            holdTimer += deltaTime;
+            if (holdTimer >= REQUIRED_HOLD_TIME) {
+              score += 100;
+              showSuccessFlash();
+              nextLevel();
             }
+          } else {
+            holdTimer = Math.max(0, holdTimer - deltaTime * 1.5);
           }
         } else {
-          trackingValid = false;
+          leftValid = false;
+          rightValid = false;
           trackingStatusMessage = "OUT OF FRAME";
           holdTimer = 0;
-          if (rightForearmBone) {
-            rightForearmBone.quaternion.copy(initialQuaternion);
-          }
+          if (leftForearmBone) leftForearmBone.quaternion.copy(initialLeftQuat);
+          if (rightForearmBone) rightForearmBone.quaternion.copy(initialRightQuat);
         }
 
         updateHUD();
