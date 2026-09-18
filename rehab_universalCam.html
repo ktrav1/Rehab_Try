@@ -213,12 +213,13 @@
     ground.receiveShadow = true;
     scene.add(ground);
 
-    // ============ 2. DENSE ENVIRONMENT ============
-    const GREEN_PALETTE = [
+    // ============ 2. LUSH GREEN ENVIRONMENT & WILDFLOWERS ============
+    const GREEN_TREE_PALETTE = [
       0x1b4332, 0x2d6a4f, 0x40916c, 0x52b788,
       0x1e3a1e, 0x2e5a27, 0x3d7a37, 0x4d9a47,
       0x0f2b1d, 0x184e2e, 0x23703e, 0x2f924e
     ];
+    const FLOWER_PALETTE = [0xff4d6d, 0xffb703, 0x7209b7, 0x4cc9f0, 0xff9e00, 0xf72585];
     const TRUNK_MAT = new THREE.MeshStandardMaterial({ color: 0x4a2e1b, roughness: 0.9 });
 
     function createPineTree(color) {
@@ -254,79 +255,103 @@
       return group;
     }
 
-    function createBush(color) {
+    function createFlowerPatch(color) {
       const group = new THREE.Group();
-      const mat = new THREE.MeshStandardMaterial({ color, roughness: 0.8, flatShading: true });
-      const bushGeo = new THREE.DodecahedronGeometry(0.4, 1);
 
-      const p1 = new THREE.Mesh(bushGeo, mat);
-      p1.position.set(0, 0.3, 0);
-      p1.castShadow = true;
-      group.add(p1);
+      // Foliage Base
+      const bushMat = new THREE.MeshStandardMaterial({ color: 0x38b000, roughness: 0.8, flatShading: true });
+      const base = new THREE.Mesh(new THREE.DodecahedronGeometry(0.35, 1), bushMat);
+      base.position.y = 0.2;
+      base.scale.set(1.2, 0.6, 1.2);
+      base.castShadow = true;
+      group.add(base);
 
-      const p2 = new THREE.Mesh(bushGeo, mat);
-      p2.position.set(0.25, 0.25, 0.1);
-      p2.scale.setScalar(0.75);
-      p2.castShadow = true;
-      group.add(p2);
+      // Colorful Blossoms
+      const flowerMat = new THREE.MeshStandardMaterial({ color, roughness: 0.4 });
+      const centerMat = new THREE.MeshStandardMaterial({ color: 0xffea00, roughness: 0.3 });
+      const petalGeo = new THREE.SphereGeometry(0.06, 6, 6);
+      const centerGeo = new THREE.SphereGeometry(0.04, 6, 6);
+
+      for (let i = 0; i < 5; i++) {
+        const flower = new THREE.Group();
+        const center = new THREE.Mesh(centerGeo, centerMat);
+        flower.add(center);
+
+        for (let p = 0; p < 5; p++) {
+          const petal = new THREE.Mesh(petalGeo, flowerMat);
+          const angle = (p / 5) * Math.PI * 2;
+          petal.position.set(Math.cos(angle) * 0.07, 0, Math.sin(angle) * 0.07);
+          petal.scale.set(1, 0.4, 1);
+          flower.add(petal);
+        }
+
+        const offsetAngle = (i / 5) * Math.PI * 2;
+        const rad = 0.15 + Math.random() * 0.1;
+        flower.position.set(Math.cos(offsetAngle) * rad, 0.35 + Math.random() * 0.08, Math.sin(offsetAngle) * rad);
+        flower.rotation.x = (Math.random() - 0.5) * 0.4;
+        flower.rotation.z = (Math.random() - 0.5) * 0.4;
+        group.add(flower);
+      }
 
       return group;
     }
 
-    function createGrassClump(color) {
-      const group = new THREE.Group();
-      const mat = new THREE.MeshStandardMaterial({ color, roughness: 0.6, side: THREE.DoubleSide });
-      const bladeGeo = new THREE.ConeGeometry(0.05, 0.35, 3);
+    // Floating Ambient Particles (Pollen/Butterflies)
+    let particleSystem;
+    function createAmbientParticles() {
+      const count = 120;
+      const geometry = new THREE.BufferGeometry();
+      const positions = new Float32Array(count * 3);
+      const colors = new Float32Array(count * 3);
 
-      for (let i = 0; i < 5; i++) {
-        const blade = new THREE.Mesh(bladeGeo, mat);
-        blade.position.set((Math.random() - 0.5) * 0.15, 0.15, (Math.random() - 0.5) * 0.15);
-        blade.rotation.x = (Math.random() - 0.5) * 0.3;
-        blade.rotation.z = (Math.random() - 0.5) * 0.3;
-        group.add(blade);
+      for (let i = 0; i < count; i++) {
+        positions[i * 3] = (Math.random() - 0.5) * 16;
+        positions[i * 3 + 1] = 0.5 + Math.random() * 3.5;
+        positions[i * 3 + 2] = (Math.random() - 0.5) * 12;
+
+        colors[i * 3] = 1.0;
+        colors[i * 3 + 1] = 0.9 + Math.random() * 0.1;
+        colors[i * 3 + 2] = 0.4 + Math.random() * 0.5;
       }
-      return group;
+
+      geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+      geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+
+      const material = new THREE.PointsMaterial({
+        size: 0.06,
+        vertexColors: true,
+        transparent: true,
+        opacity: 0.8
+      });
+
+      particleSystem = new THREE.Points(geometry, material);
+      scene.add(particleSystem);
     }
 
     function populateForest() {
-      const treeConfigs = [];
+      // Green Trees
       for (let i = 0; i < 22; i++) {
         const side = Math.random() > 0.5 ? 1 : -1;
-        treeConfigs.push({
-          x: side * (2.2 + Math.random() * 6.0),
-          z: -1.5 - Math.random() * 10.0,
-          scale: 0.9 + Math.random() * 0.7,
-          type: Math.random() > 0.5 ? 'pine' : 'round'
-        });
-      }
-
-      treeConfigs.forEach(pos => {
-        const color = GREEN_PALETTE[Math.floor(Math.random() * GREEN_PALETTE.length)];
-        const tree = pos.type === 'round' ? createRoundTree(color) : createPineTree(color);
-        tree.position.set(pos.x, 0, pos.z);
-        tree.scale.setScalar(pos.scale);
+        const color = GREEN_TREE_PALETTE[Math.floor(Math.random() * GREEN_TREE_PALETTE.length)];
+        const tree = Math.random() > 0.5 ? createRoundTree(color) : createPineTree(color);
+        tree.position.set(side * (2.2 + Math.random() * 6.0), 0, -1.5 - Math.random() * 10.0);
+        tree.scale.setScalar(0.9 + Math.random() * 0.7);
         scene.add(tree);
-      });
-
-      for (let i = 0; i < 20; i++) {
-        const color = GREEN_PALETTE[Math.floor(Math.random() * GREEN_PALETTE.length)];
-        const bush = createBush(color);
-        const side = Math.random() > 0.5 ? 1 : -1;
-        bush.position.set(side * (1.5 + Math.random() * 6), 0, -1 - Math.random() * 8);
-        bush.scale.setScalar(0.8 + Math.random() * 0.6);
-        scene.add(bush);
       }
 
-      for (let i = 0; i < 35; i++) {
-        const color = GREEN_PALETTE[Math.floor(Math.random() * GREEN_PALETTE.length)];
-        const grass = createGrassClump(color);
-        grass.position.set((Math.random() - 0.5) * 12, 0, -0.5 - Math.random() * 8);
-        grass.scale.setScalar(0.8 + Math.random() * 0.8);
-        scene.add(grass);
+      // Wildflower Patches
+      for (let i = 0; i < 28; i++) {
+        const color = FLOWER_PALETTE[Math.floor(Math.random() * FLOWER_PALETTE.length)];
+        const flowers = createFlowerPatch(color);
+        const side = Math.random() > 0.5 ? 1 : -1;
+        flowers.position.set(side * (0.8 + Math.random() * 5.5), 0, 0.5 - Math.random() * 8.5);
+        flowers.scale.setScalar(0.8 + Math.random() * 0.6);
+        scene.add(flowers);
       }
     }
 
     populateForest();
+    createAmbientParticles();
 
     // ============ 3. FBX AVATAR LOADING & RIGGING ============
     let avatarModel = null;
@@ -412,14 +437,9 @@
     let trackingValid = false;
     let trackingStatusMessage = "OUT OF FRAME";
 
-    // Dynamic auto-calibration for cross-hardware variance
     let detectedMinAngle = 180.0;
     let detectedMaxAngle = 0.0;
 
-    /**
-     * Calculates 2D planar angle adjusted for camera aspect ratio.
-     * Normalization prevents wide-angle lenses from stretching calculated angles.
-     */
     function calculateNormalized2DAngle(a, b, c, aspect) {
       const ba = [(a.x - b.x) * aspect, a.y - b.y];
       const bc = [(c.x - b.x) * aspect, c.y - b.y];
@@ -434,10 +454,6 @@
       return (Math.acos(cosAngle) * 180.0) / Math.PI;
     }
 
-    /**
-     * Dynamic Range Adaptive Mapper
-     * Automatically adjusts bounds to ensure full 20°-180° range regardless of camera distance or lens.
-     */
     function mapToAdaptiveFullRange(rawAngle) {
       detectedMinAngle = Math.min(detectedMinAngle, rawAngle);
       detectedMaxAngle = Math.max(detectedMaxAngle, rawAngle);
@@ -451,7 +467,6 @@
       return 20.0 + normalized * (180.0 - 20.0);
     }
 
-    // Low-latency filter to stabilize frame rate fluctuations across different laptops
     class OneEuroFilter {
       constructor(minCutoff = 1.0, beta = 0.007) {
         this.minCutoff = minCutoff;
@@ -550,22 +565,16 @@
 
           const sVis = s.visibility ?? 1.0, eVis = e.visibility ?? 1.0, wVis = w.visibility ?? 1.0;
 
-          // Tightened Visibility Threshold for strict detection
           const MIN_VISIBILITY = 0.60;
           const isVisible = (sVis > MIN_VISIBILITY && eVis > MIN_VISIBILITY && wVis > MIN_VISIBILITY);
 
           const inBounds = (pt) => (pt.x >= 0.05 && pt.x <= 0.95 && pt.y >= 0.05 && pt.y <= 0.95);
           const isInsideFrame = inBounds(s) && inBounds(e) && inBounds(w);
 
-          // ANATOMICAL & POSTURAL VALIDATION
-          // Check 1: Calculate segment lengths to detect severe perspective collapse or arm hanging down out of position
           const upperArmLen = Math.hypot(e.x - s.x, e.y - s.y);
           const foreArmLen = Math.hypot(w.x - e.x, w.y - e.y);
 
-          // Check 2: Verticality check - If wrist drops way below elbow when shoulder is low, detect arm drop
           const isArmDroppedVertical = (w.y - s.y > 0.45) && (Math.abs(w.x - s.x) < 0.12);
-
-          // Check 3: Ratio validation between upper arm and forearm to detect foreshortening/occlusion
           const armRatio = upperArmLen > 0 ? (foreArmLen / upperArmLen) : 0;
           const isRatioValid = armRatio > 0.35 && armRatio < 2.5;
 
@@ -585,30 +594,23 @@
             trackingValid = true;
             trackingStatusMessage = "TRACKING ACTIVE";
 
-            // Camera aspect ratio normalization
             const aspect = (video.videoWidth && video.videoHeight) ? (video.videoWidth / video.videoHeight) : (4 / 3);
 
-            // Step 1: Aspect-ratio adjusted 2D angle
             const rawAngle = calculateNormalized2DAngle(s, e, w, aspect);
-
-            // Step 2: Auto-calibrating physiological mapper
             const mappedAngle = mapToAdaptiveFullRange(rawAngle);
 
-            // Step 3: Adaptive One Euro Signal Filter
             smoothedAngle = angleFilter.filter(mappedAngle, deltaTime);
             lastAppliedAngle = smoothedAngle;
 
             const clampedAngle = THREE.MathUtils.clamp(lastAppliedAngle, 20.0, 180.0);
             const flexionOffset = THREE.MathUtils.degToRad(180.0 - clampedAngle);
 
-            // Local Quaternion transform prevents skeletal twisting
             if (rightForearmBone) {
               const offsetQuat = new THREE.Quaternion();
               offsetQuat.setFromAxisAngle(new THREE.Vector3(1, 0, 0), -flexionOffset);
               rightForearmBone.quaternion.copy(initialQuaternion).multiply(offsetQuat);
             }
 
-            // Target Hold Mechanics
             const targetDist = Math.abs(clampedAngle - targetAngle);
             if (targetDist <= 10.0) {
               holdTimer += deltaTime;
