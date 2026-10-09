@@ -1,0 +1,236 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Routine | Pediatric Indoor Navigation</title>
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: #0b1120
+        }
+
+        #sceneCanvas {
+            display: block
+        }
+
+        #hud {
+            position: fixed;
+            top: 20px;
+            left: 20px;
+            right: 20px;
+            height: 90px;
+            background: rgba(255, 255, 255, .92);
+            border-radius: 16px;
+            border: 2px solid #e2e8f0;
+            display: flex;
+            align-items: center;
+            padding: 0 30px;
+            gap: 30px;
+            box-shadow: 0 4px 16px rgba(0, 0, 0, .15);
+            z-index: 10;
+            backdrop-filter: blur(8px)
+        }
+
+        .hud-stat .label {
+            font-size: 11px;
+            font-weight: 700;
+            color: #64748b;
+            letter-spacing: .5px
+        }
+
+        .hud-stat .value {
+            font-size: 22px;
+            font-weight: 800;
+            color: #0f172a
+        }
+
+        #statusBadge {
+            margin-left: auto;
+            padding: 10px 20px;
+            border-radius: 8px;
+            font-weight: 700;
+            font-size: 13px;
+            color: #fff;
+            background: #3b82f6;
+            text-align: center;
+            min-width: 150px
+        }
+
+        #controlPanel {
+            position: fixed;
+            bottom: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(255, 255, 255, 0.95);
+            padding: 15px 25px;
+            border-radius: 14px;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+            z-index: 10;
+            display: flex;
+            gap: 15px;
+            align-items: center;
+        }
+
+        .btn {
+            padding: 10px 20px;
+            border-radius: 8px;
+            font-weight: 700;
+            font-size: 14px;
+            cursor: pointer;
+            border: none;
+            color: #fff;
+            background: #10b981;
+        }
+
+        #navMessage {
+            position: fixed;
+            top: 130px;
+            left: 50%;
+            transform: translateX(-50%);
+            font-size: 18px;
+            font-weight: 800;
+            color: #0f172a;
+            background: rgba(255, 255, 255, .9);
+            padding: 10px 24px;
+            border-radius: 20px;
+            z-index: 10;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+            text-align: center;
+        }
+    </style>
+</head>
+
+<body>
+
+    <div id="hud">
+        <div class="hud-stat">
+            <div class="label">BEACON STATUS</div>
+            <div class="value" id="signalValue">IDLE</div>
+        </div>
+        <div class="hud-stat">
+            <div class="label">SIGNAL (RSSI)</div>
+            <div class="value" id="proxValue">--</div>
+        </div>
+        <div id="statusBadge">READY TO SCAN</div>
+    </div>
+
+    <div id="navMessage">Tap 'Start Beacon Scan' to begin listening for your Estimote beacon!</div>
+
+    <div id="controlPanel">
+        <button class="btn" id="connectBtn">Start Beacon Scan</button>
+    </div>
+
+    <script type="importmap">
+{"imports":{"three":"https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js","three/addons/":"https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"}}
+</script>
+
+    <script type="module">
+        import * as THREE from "three";
+        import { FBXLoader } from "three/addons/loaders/FBXLoader.js";
+
+        const GITHUB_FBX_URL = "https://raw.githubusercontent.com/ktrav1/Rehab_Try/main/Ch46_nonPBR.fbx";
+        const $ = (id) => document.getElementById(id);
+
+        // ============ 1. SCENE SETUP ============
+        const scene = new THREE.Scene();
+        scene.background = new THREE.Color(0x87ceeb);
+        scene.fog = new THREE.FogExp2(0x87ceeb, 0.035);
+
+        const camera = new THREE.PerspectiveCamera(50, innerWidth / innerHeight, 0.1, 100);
+        camera.position.set(0, 1.8, 4.5);
+        camera.lookAt(0, 1.2, 0);
+
+        const renderer = new THREE.WebGLRenderer({ antialias: true });
+        renderer.setSize(innerWidth, innerHeight);
+        renderer.shadowMap.enabled = true;
+        renderer.domElement.id = "sceneCanvas";
+        document.body.appendChild(renderer.domElement);
+
+        scene.add(new THREE.HemisphereLight(0xffffff, 0x4a7c3f, 1.5));
+        const sun = new THREE.DirectionalLight(0xfff4e0, 1.8);
+        sun.position.set(5, 12, 6);
+        scene.add(sun);
+
+        const ground = new THREE.Mesh(new THREE.PlaneGeometry(60, 60), new THREE.MeshStandardMaterial({ color: 0x6ab04c }));
+        ground.rotation.x = -Math.PI / 2;
+        scene.add(ground);
+
+        // ============ 2. LOAD AVATAR ============
+        let avatarModel = null;
+        const fbxLoader = new FBXLoader();
+        fbxLoader.load(GITHUB_FBX_URL, (fbx) => {
+            avatarModel = fbx;
+            avatarModel.scale.setScalar(0.01);
+            scene.add(avatarModel);
+        }, undefined, (err) => console.error("FBX Load Error:", err));
+
+        // ============ 3. BLUETOOTH ADVERTISEMENT SCANNER ============
+        const connectBtn = $("connectBtn");
+
+        connectBtn.addEventListener("click", async () => {
+            try {
+                $("signalValue").textContent = "REQUESTING...";
+
+                // Check if LE Scan is available
+                if (!navigator.bluetooth || !navigator.bluetooth.requestLEScan) {
+                    alert("Web Bluetooth LE Scan is not supported in this browser. Please use Chrome on Android.");
+                    return;
+                }
+
+                // Request permission and start scanning for all advertisements
+                const scan = await navigator.bluetooth.requestLEScan({
+                    acceptAllAdvertisements: true
+                });
+
+                $("signalValue").textContent = "LISTENING";
+                $("statusBadge").textContent = "TRACKING ACTIVE";
+                $("statusBadge.style.background") = "#10b981";
+                $("navMessage").textContent = "Listening for advertisements... Move beacon closer!";
+
+                // Listen for incoming beacon broadcast packets
+                navigator.bluetooth.addEventListener('advertisementreceived', (event) => {
+                    const rssi = event.rssi;
+                    const deviceName = event.device.name || "Estimote Beacon";
+
+                    $("proxValue").textContent = `${rssi} dBm`;
+
+                    // Proximity zones based on signal strength (RSSI)
+                    if (rssi > -65) {
+                        $("navMessage").textContent = `🎯 Close to ${deviceName}! You've reached the target zone.`;
+                    } else if (rssi > -85) {
+                        $("navMessage").textContent = `🚶 Approaching ${deviceName}... Keep going!`;
+                    } else {
+                        $("navMessage").textContent = `📡 Signal from ${deviceName} is faint. Walk closer.`;
+                    }
+                });
+
+            } catch (error) {
+                console.error("Bluetooth Scan Error:", error);
+                $("signalValue").textContent = "FAILED";
+                $("navMessage").textContent = "Scan permission denied or unavailable.";
+            }
+        });
+
+        // ============ 4. MAIN LOOP ============
+        function loop() {
+            if (avatarModel) {
+                avatarModel.updateMatrixWorld(true);
+            }
+            renderer.render(scene, camera);
+            requestAnimationFrame(loop);
+        }
+        loop();
+
+        addEventListener("resize", () => {
+            camera.aspect = innerWidth / innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(innerWidth, innerHeight);
+        });
+    </script>
+</body>
+
+</html>
